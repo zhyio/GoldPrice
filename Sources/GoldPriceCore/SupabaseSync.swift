@@ -3,13 +3,13 @@ import Foundation
 /// Pure-Swift Supabase REST client for syncing portfolio data.
 /// Zero third-party dependencies — uses only URLSession.
 ///
-/// Shares the same database row as the fitness-plan app:
-///   Table: `fitness_data`, id: ROW_ID (the single existing row)
-///   Field: `exercises.gold_holdings` — JSON-encoded `[FundHolding]`
+/// Dedicated table for GoldPrice:
+///   Table: `goldprice_data`, user_id: `goldprice_web`
+///   Field: `holdings` — JSON-encoded `[FundHolding]`
 actor SupabaseSync {
     private let baseURL = "https://owqhouyafggdzgcqwlji.supabase.co/rest/v1"
     private let apiKey = "sb_publishable_QgsSE7ZoIfcaPsJLlkfS5w_tGvRz_I6"
-    private let rowID = "c5c4ca38-9682-451c-b4da-228de7f8b83b"
+    private let userID = "goldprice_web"
 
     private let session: URLSession
 
@@ -26,10 +26,10 @@ actor SupabaseSync {
 
     // MARK: - Fetch
 
-    /// Fetches holdings from Supabase `exercises.gold_holdings`. Returns nil on any failure.
+    /// Fetches holdings from Supabase `goldprice_data.holdings`. Returns nil on any failure.
     func fetchHoldings() async -> [FundHolding]? {
         guard let url = URL(
-            string: "\(baseURL)/fitness_data?id=eq.\(rowID)&select=exercises"
+            string: "\(baseURL)/goldprice_data?user_id=eq.\(userID)&select=holdings&limit=1"
         ) else { return nil }
 
         var request = URLRequest(url: url)
@@ -42,15 +42,12 @@ actor SupabaseSync {
             guard let http = response as? HTTPURLResponse,
                   (200...299).contains(http.statusCode) else { return nil }
 
-            let rows = try JSONDecoder().decode([ExercisesRow].self, from: data)
-            guard let row = rows.first,
-                  let exercises = row.exercises,
-                  let goldHoldings = exercises["gold_holdings"]
-            else { return nil }
+            let rows = try JSONDecoder().decode([HoldingsRow].self, from: data)
+            guard let row = rows.first, let holdings = row.holdings else { return nil }
 
-            // gold_holdings is a JSON *string* of [FundHolding]
+            // holdings might be a string (if sent as serialized json) or array
             let holdingsString: String
-            switch goldHoldings {
+            switch holdings {
             case .string(let s):
                 holdingsString = s
             case .unknown(let raw):
@@ -66,57 +63,40 @@ actor SupabaseSync {
 
     // MARK: - Upload
 
-    /// Uploads holdings to Supabase. Reads current exercises first, merges gold_holdings, then PATCHes.
+    /// Uploads holdings to Supabase using upsert.
     func uploadHoldings(_ holdings: [FundHolding]) async {
-        // 1. Encode holdings to JSON string
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         guard let holdingsData = try? encoder.encode(holdings),
               let holdingsString = String(data: holdingsData, encoding: .utf8)
         else { return }
 
-        // 2. Read current exercises to preserve fitness-plan data
-        guard let url = URL(
-            string: "\(baseURL)/fitness_data?id=eq.\(rowID)&select=exercises"
-        ) else { return }
-
-        var getRequest = URLRequest(url: url)
-        getRequest.httpMethod = "GET"
-        applyHeaders(to: &getRequest)
-        getRequest.setValue("application/json", forHTTPHeaderField: "Accept")
-
-        var currentExercises: [String: Any] = [:]
-        if let (getData, getResponse) = try? await session.data(for: getRequest),
-           let http = getResponse as? HTTPURLResponse,
-           (200...299).contains(http.statusCode),
-           let json = try? JSONSerialization.jsonObject(with: getData) as? [[String: Any]],
-           let first = json.first,
-           let exercises = first["exercises"] as? [String: Any] {
-            currentExercises = exercises
-        }
-
-        // 3. Merge gold_holdings
-        currentExercises["gold_holdings"] = holdingsString
+        // We can just pass the string to jsonb since Supabase expects json/jsonb,
+        // but to ensure it's not double-stringified, we decode it back to a struct or dictionary.
+        // Actually, upserting a JSON payload: {"user_id": "...", "holdings": <parsed json array>}
+        guard let parsedHoldings = try? JSONSerialization.jsonObject(with: holdingsData) else { return }
 
         let payload: [String: Any] = [
-            "exercises": currentExercises,
+            "user_id": userID,
+            "holdings": parsedHoldings,
             "updated_at": ISO8601DateFormatter().string(from: Date())
         ]
 
         guard let body = try? JSONSerialization.data(withJSONObject: payload) else { return }
 
-        // 4. PATCH
-        guard let patchURL = URL(
-            string: "\(baseURL)/fitness_data?id=eq.\(rowID)"
+        guard let upsertURL = URL(
+            string: "\(baseURL)/goldprice_data?on_conflict=user_id"
         ) else { return }
 
-        var patchRequest = URLRequest(url: patchURL)
-        patchRequest.httpMethod = "PATCH"
-        patchRequest.httpBody = body
-        applyHeaders(to: &patchRequest)
-        patchRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        var upsertRequest = URLRequest(url: upsertURL)
+        upsertRequest.httpMethod = "POST"
+        upsertRequest.httpBody = body
+        applyHeaders(to: &upsertRequest)
+        upsertRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        upsertRequest.setValue("return=minimal", forHTTPHeaderField: "Prefer")
+        upsertRequest.setValue("merge-duplicates", forHTTPHeaderField: "Resolution") // For on_conflict
 
-        _ = try? await session.data(for: patchRequest)
+        _ = try? await session.data(for: upsertRequest)
     }
 
     // MARK: - Helpers
@@ -129,7 +109,6 @@ actor SupabaseSync {
 
 // MARK: - Codable models for parsing
 
-/// Flexible JSON value for handling gold_holdings which may be a string or nested object.
 private enum FlexibleValue: Decodable {
     case string(String)
     case unknown(String)
@@ -188,6 +167,6 @@ private struct AnyCodable: Codable {
     init(value: Any) { self.value = value }
 }
 
-private struct ExercisesRow: Decodable {
-    let exercises: [String: FlexibleValue]?
+private struct HoldingsRow: Decodable {
+    let holdings: FlexibleValue?
 }
