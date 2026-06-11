@@ -31,8 +31,8 @@ struct MarketView: View {
             }
         }
         .frame(
-            width: areFundsExpanded ? 530 : 360,
-            height: areFundsExpanded ? 290 : 56
+            width: areFundsExpanded ? 530 : 320,
+            height: areFundsExpanded ? 350 : 56
         )
         .background(glassBackground)
     }
@@ -170,7 +170,7 @@ struct MarketView: View {
             fundTableHeader
 
             ScrollView(.vertical, showsIndicators: false) {
-                LazyVStack(spacing: 0) {
+                VStack(spacing: 0) {
                     ForEach(funds.holdings, id: \.code) { holding in
                         fundRow(holding)
                     }
@@ -263,6 +263,7 @@ struct MarketView: View {
                         .font(.system(size: 10, weight: .medium))
                 }
                 .foregroundStyle(.white.opacity(0.4))
+                .frame(width: 190, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -386,7 +387,7 @@ struct MarketView: View {
     @ViewBuilder
     private var glassBackground: some View {
         RoundedRectangle(cornerRadius: 10)
-            .fill(.black.opacity(0.45))
+            .fill(.black.opacity(0.75))
         RoundedRectangle(cornerRadius: 10)
             .strokeBorder(.white.opacity(0.1), lineWidth: 0.5)
     }

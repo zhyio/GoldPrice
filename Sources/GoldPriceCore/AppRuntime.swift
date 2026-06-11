@@ -4,8 +4,8 @@ import SwiftUI
 @MainActor
 private final class AppDelegate: NSObject, NSApplicationDelegate {
     private enum Layout {
-        static let collapsedSize = NSSize(width: 360, height: 56)
-        static let expandedSize = NSSize(width: 530, height: 290)
+        static let collapsedSize = NSSize(width: 320, height: 56)
+        static let expandedSize = NSSize(width: 530, height: 350)
         static let screenMargin: CGFloat = 16
     }
 
@@ -56,7 +56,15 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         funds.holdings.append(holding)
         savePortfolio()
         render()
-        Task { await refreshFunds() }
+        Task {
+            await refreshFunds()
+            if let index = funds.holdings.firstIndex(where: { $0.code == code }),
+               funds.holdings[index].name == "加载中..." {
+                funds.holdings[index].name = "未找到(请删除重试)"
+                savePortfolio()
+                render()
+            }
+        }
     }
 
     private func adjustFund(code: String, amount: Double, isIncrease: Bool) {
