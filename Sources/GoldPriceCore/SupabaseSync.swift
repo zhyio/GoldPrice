@@ -3,16 +3,15 @@ import Foundation
 /// Pure-Swift Supabase REST client for syncing portfolio data.
 /// Zero third-party dependencies — uses only URLSession.
 ///
-/// Shares the same database row as the GoldPriceWeb frontend:
-///   Table: `fitness_data`, user_id: `goldprice_web`
-///   Field: `exercises.holdings` — JSON-encoded `[FundHolding]`
+/// Shares the same database row as the fitness-plan app:
+///   Table: `fitness_data`, id: ROW_ID (the single existing row)
+///   Field: `exercises.gold_holdings` — JSON-encoded `[FundHolding]`
 actor SupabaseSync {
     private let baseURL = "https://owqhouyafggdzgcqwlji.supabase.co/rest/v1"
     private let apiKey = "sb_publishable_QgsSE7ZoIfcaPsJLlkfS5w_tGvRz_I6"
-    private let userID = "goldprice_web"
+    private let rowID = "c5c4ca38-9682-451c-b4da-228de7f8b83b"
 
     private let session: URLSession
-    private var remoteID: Int?
 
     init(session: URLSession? = nil) {
         if let session {
@@ -27,10 +26,10 @@ actor SupabaseSync {
 
     // MARK: - Fetch
 
-    /// Fetches holdings from Supabase. Returns nil on any failure (offline, etc.)
+    /// Fetches holdings from Supabase `exercises.gold_holdings`. Returns nil on any failure.
     func fetchHoldings() async -> [FundHolding]? {
         guard let url = URL(
-            string: "\(baseURL)/fitness_data?user_id=eq.\(userID)&select=id,exercises,updated_at&limit=1"
+            string: "\(baseURL)/fitness_data?id=eq.\(rowID)&select=exercises"
         ) else { return nil }
 
         var request = URLRequest(url: url)
@@ -43,15 +42,22 @@ actor SupabaseSync {
             guard let http = response as? HTTPURLResponse,
                   (200...299).contains(http.statusCode) else { return nil }
 
-            let rows = try JSONDecoder().decode([SupabaseRow].self, from: data)
-            guard let row = rows.first else { return nil }
+            let rows = try JSONDecoder().decode([ExercisesRow].self, from: data)
+            guard let row = rows.first,
+                  let exercises = row.exercises,
+                  let goldHoldings = exercises["gold_holdings"]
+            else { return nil }
 
-            remoteID = row.id
+            // gold_holdings is a JSON *string* of [FundHolding]
+            let holdingsString: String
+            switch goldHoldings {
+            case .string(let s):
+                holdingsString = s
+            case .unknown(let raw):
+                holdingsString = raw
+            }
 
-            // exercises.holdings is a JSON *string* of [FundHolding]
-            guard let holdingsString = row.exercises?["holdings"] else { return nil }
             guard let holdingsData = holdingsString.data(using: .utf8) else { return nil }
-
             return try JSONDecoder().decode([FundHolding].self, from: holdingsData)
         } catch {
             return nil
@@ -60,76 +66,60 @@ actor SupabaseSync {
 
     // MARK: - Upload
 
-    /// Uploads holdings to Supabase. Fire-and-forget; errors are silently logged.
+    /// Uploads holdings to Supabase. Reads current exercises first, merges gold_holdings, then PATCHes.
     func uploadHoldings(_ holdings: [FundHolding]) async {
-        // Encode holdings to JSON string (same format as web app's portfolio.serialize())
+        // 1. Encode holdings to JSON string
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         guard let holdingsData = try? encoder.encode(holdings),
               let holdingsString = String(data: holdingsData, encoding: .utf8)
         else { return }
 
-        let payload = SupabasePayload(
-            user_id: userID,
-            exercises: ["holdings": holdingsString],
-            updated_at: ISO8601DateFormatter().string(from: Date())
-        )
+        // 2. Read current exercises to preserve fitness-plan data
+        guard let url = URL(
+            string: "\(baseURL)/fitness_data?id=eq.\(rowID)&select=exercises"
+        ) else { return }
 
-        guard let body = try? JSONEncoder().encode(payload) else { return }
+        var getRequest = URLRequest(url: url)
+        getRequest.httpMethod = "GET"
+        applyHeaders(to: &getRequest)
+        getRequest.setValue("application/json", forHTTPHeaderField: "Accept")
 
-        if let id = remoteID {
-            // UPDATE existing row
-            await performRequest(
-                method: "PATCH",
-                path: "/fitness_data?id=eq.\(id)",
-                body: body
-            )
-        } else {
-            // INSERT new row (first time)
-            if let data = await performRequest(
-                method: "POST",
-                path: "/fitness_data",
-                body: body,
-                returnData: true
-            ) {
-                if let rows = try? JSONDecoder().decode([SupabaseRow].self, from: data),
-                   let row = rows.first {
-                    remoteID = row.id
-                }
-            }
+        var currentExercises: [String: Any] = [:]
+        if let (getData, getResponse) = try? await session.data(for: getRequest),
+           let http = getResponse as? HTTPURLResponse,
+           (200...299).contains(http.statusCode),
+           let json = try? JSONSerialization.jsonObject(with: getData) as? [[String: Any]],
+           let first = json.first,
+           let exercises = first["exercises"] as? [String: Any] {
+            currentExercises = exercises
         }
+
+        // 3. Merge gold_holdings
+        currentExercises["gold_holdings"] = holdingsString
+
+        let payload: [String: Any] = [
+            "exercises": currentExercises,
+            "updated_at": ISO8601DateFormatter().string(from: Date())
+        ]
+
+        guard let body = try? JSONSerialization.data(withJSONObject: payload) else { return }
+
+        // 4. PATCH
+        guard let patchURL = URL(
+            string: "\(baseURL)/fitness_data?id=eq.\(rowID)"
+        ) else { return }
+
+        var patchRequest = URLRequest(url: patchURL)
+        patchRequest.httpMethod = "PATCH"
+        patchRequest.httpBody = body
+        applyHeaders(to: &patchRequest)
+        patchRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        _ = try? await session.data(for: patchRequest)
     }
 
     // MARK: - Helpers
-
-    @discardableResult
-    private func performRequest(
-        method: String,
-        path: String,
-        body: Data,
-        returnData: Bool = false
-    ) async -> Data? {
-        guard let url = URL(string: "\(baseURL)\(path)") else { return nil }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = method
-        request.httpBody = body
-        applyHeaders(to: &request)
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        if returnData {
-            request.setValue("return=representation", forHTTPHeaderField: "Prefer")
-        }
-
-        do {
-            let (data, response) = try await session.data(for: request)
-            guard let http = response as? HTTPURLResponse,
-                  (200...299).contains(http.statusCode) else { return nil }
-            return data
-        } catch {
-            return nil
-        }
-    }
 
     private func applyHeaders(to request: inout URLRequest) {
         request.setValue(apiKey, forHTTPHeaderField: "apikey")
@@ -137,16 +127,67 @@ actor SupabaseSync {
     }
 }
 
-// MARK: - Codable Models (private, for REST serialization only)
+// MARK: - Codable models for parsing
 
-private struct SupabaseRow: Decodable {
-    let id: Int
-    let exercises: [String: String]?
-    let updated_at: String?
+/// Flexible JSON value for handling gold_holdings which may be a string or nested object.
+private enum FlexibleValue: Decodable {
+    case string(String)
+    case unknown(String)
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let s = try? container.decode(String.self) {
+            self = .string(s)
+        } else {
+            // Fallback: re-encode whatever is there
+            let raw = try container.decode(AnyCodable.self)
+            if let data = try? JSONEncoder().encode(raw),
+               let str = String(data: data, encoding: .utf8) {
+                self = .unknown(str)
+            } else {
+                self = .string("[]")
+            }
+        }
+    }
 }
 
-private struct SupabasePayload: Encodable {
-    let user_id: String
-    let exercises: [String: String]
-    let updated_at: String
+private struct AnyCodable: Codable {
+    let value: Any
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let arr = try? container.decode([AnyCodable].self) {
+            value = arr.map(\.value)
+        } else if let dict = try? container.decode([String: AnyCodable].self) {
+            value = dict.mapValues(\.value)
+        } else if let s = try? container.decode(String.self) {
+            value = s
+        } else if let d = try? container.decode(Double.self) {
+            value = d
+        } else if let b = try? container.decode(Bool.self) {
+            value = b
+        } else {
+            value = NSNull()
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch value {
+        case let s as String: try container.encode(s)
+        case let d as Double: try container.encode(d)
+        case let b as Bool: try container.encode(b)
+        case let arr as [Any]:
+            try container.encode(arr.map { AnyCodable(value: $0) })
+        case let dict as [String: Any]:
+            try container.encode(dict.mapValues { AnyCodable(value: $0) })
+        default: try container.encodeNil()
+        }
+    }
+
+    init(value: Any) { self.value = value }
+}
+
+private struct ExercisesRow: Decodable {
+    let exercises: [String: FlexibleValue]?
 }
