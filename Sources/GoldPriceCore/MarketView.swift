@@ -48,11 +48,11 @@ struct MarketView: View {
                 .foregroundStyle(.white.opacity(0.55))
 
             if quote != nil {
-                Link(destination: destination) {
-                    priceText(price)
-                }
-                .buttonStyle(.plain)
-                .help("在东方财富查看\(label)行情")
+                PriceLink(
+                    price: price,
+                    label: label,
+                    destination: destination
+                )
             } else {
                 priceText(price)
             }
@@ -110,6 +110,34 @@ struct MarketView: View {
         case .down: return Color(hex: "00A870")
         case .flat: return Color(hex: "9CA3AF")
         }
+    }
+}
+
+private struct PriceLink: View {
+    private static let longPressDuration = 0.45
+
+    @Environment(\.openURL) private var openURL
+
+    let price: String
+    let label: String
+    let destination: URL
+
+    var body: some View {
+        Text(price)
+            .font(.system(size: 13, weight: .semibold, design: .monospaced))
+            .foregroundStyle(.white.opacity(0.92))
+            .contentShape(Rectangle())
+            .gesture(clickGesture)
+            .help("单击在东方财富查看\(label)行情")
+    }
+
+    private var clickGesture: some Gesture {
+        LongPressGesture(minimumDuration: Self.longPressDuration)
+            .exclusively(before: TapGesture())
+            .onEnded { result in
+                guard case .second = result else { return }
+                openURL(destination)
+            }
     }
 }
 
