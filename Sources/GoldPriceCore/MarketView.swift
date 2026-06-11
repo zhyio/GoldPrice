@@ -4,6 +4,8 @@ struct MarketView: View {
     private static let goldDetailsURL = URL(string: "https://quote.eastmoney.com/globalfuture/AU9999.html")!
     private static let indexDetailsURL = URL(string: "https://quote.eastmoney.com/unify/r/1.000001")!
 
+    @Environment(\.openURL) private var openURL
+
     let market: MarketSnapshot
     let funds: FundPortfolio
     let areFundsExpanded: Bool
@@ -20,7 +22,7 @@ struct MarketView: View {
             }
         }
         .frame(
-            width: areFundsExpanded ? 530 : 232,
+            width: areFundsExpanded ? 530 : 320,
             height: areFundsExpanded ? 254 : 52
         )
         .background(glassBackground)
@@ -28,16 +30,6 @@ struct MarketView: View {
 
     private var marketHeader: some View {
         HStack(spacing: 8) {
-            Button(action: onToggleFunds) {
-                Image(systemName: areFundsExpanded ? "chevron.up" : "chevron.down")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.7))
-                    .frame(width: 18, height: 32)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help(areFundsExpanded ? "收起基金列表" : "展开基金列表")
-
             VStack(spacing: 6) {
                 row(
                     label: "金价",
@@ -57,18 +49,28 @@ struct MarketView: View {
             }
             .frame(width: 190)
 
-            if areFundsExpanded {
-                Spacer(minLength: 8)
+            Spacer(minLength: 0)
 
+            if areFundsExpanded {
                 VStack(alignment: .trailing, spacing: 2) {
                     Text("基金持仓")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(.white.opacity(0.9))
-                    Text("每小时更新今日涨跌")
-                        .font(.system(size: 9))
-                        .foregroundStyle(.white.opacity(0.42))
+                    todayEarningsLabel
                 }
+            } else {
+                todayEarningsView
             }
+
+            Button(action: onToggleFunds) {
+                Image(systemName: areFundsExpanded ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.7))
+                    .frame(width: 18, height: 32)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(areFundsExpanded ? "收起基金列表" : "展开基金列表")
         }
         .padding(.horizontal, 8)
         .frame(height: 52)
@@ -112,17 +114,24 @@ struct MarketView: View {
 
     private func fundRow(_ holding: FundHolding) -> some View {
         HStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 1) {
-                Text(holding.name)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.88))
-                    .lineLimit(1)
-                Text(holding.code)
-                    .font(.system(size: 8, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.35))
+            Button(action: {
+                if let url = URL(string: "https://fund.eastmoney.com/\(holding.code).html") {
+                    openURL(url)
+                }
+            }) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(holding.name)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.88))
+                        .lineLimit(1)
+                    Text(holding.code)
+                        .font(.system(size: 8, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.35))
+                }
             }
+            .buttonStyle(.plain)
             .frame(width: 250, alignment: .leading)
-            .help("\(holding.name)（\(holding.code)）")
+            .help("点击查看 \(holding.name) 详情")
 
             Text(formattedAmount(holding.amount))
                 .frame(width: 92, alignment: .trailing)
@@ -220,6 +229,51 @@ struct MarketView: View {
         return "更新 " + updatedAt.formatted(
             .dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits)
         )
+    }
+
+    private var todayEstimatedEarnings: Double? {
+        guard !funds.isLoading else { return nil }
+        let holdingsWithEstimate = funds.holdings.filter { $0.todayChangePercent != nil }
+        guard !holdingsWithEstimate.isEmpty else { return nil }
+        return holdingsWithEstimate.reduce(0) { total, holding in
+            total + holding.amount * (holding.todayChangePercent ?? 0) / 100
+        }
+    }
+
+    private var todayEarningsView: some View {
+        let earnings = todayEstimatedEarnings
+        let trend = earnings.map(Trend.init(value:)) ?? .flat
+        return VStack(alignment: .trailing, spacing: 2) {
+            Text("今日")
+                .font(.system(size: 9))
+                .foregroundStyle(.white.opacity(0.5))
+            Text(formattedEarnings(earnings))
+                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .foregroundStyle(earnings == nil ? .white.opacity(0.35) : trendColor(trend))
+        }
+    }
+
+    private var todayEarningsLabel: some View {
+        let earnings = todayEstimatedEarnings
+        let trend = earnings.map(Trend.init(value:)) ?? .flat
+        return HStack(spacing: 3) {
+            Text("今日")
+                .foregroundStyle(.white.opacity(0.42))
+            Text(formattedEarnings(earnings))
+                .foregroundStyle(earnings == nil ? .white.opacity(0.42) : trendColor(trend))
+        }
+        .font(.system(size: 9))
+    }
+
+    private func formattedEarnings(_ value: Double?) -> String {
+        guard let value else { return "--" }
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.groupingSeparator = ","
+        formatter.maximumFractionDigits = 2
+        formatter.minimumFractionDigits = 2
+        let formatted = formatter.string(from: NSNumber(value: value)) ?? "0.00"
+        return value > 0 ? "+\(formatted)" : formatted
     }
 
     private func trendSymbol(_ trend: Trend) -> String {

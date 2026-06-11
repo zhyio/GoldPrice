@@ -4,7 +4,7 @@ import SwiftUI
 @MainActor
 private final class AppDelegate: NSObject, NSApplicationDelegate {
     private enum Layout {
-        static let collapsedSize = NSSize(width: 232, height: 52)
+        static let collapsedSize = NSSize(width: 320, height: 52)
         static let expandedSize = NSSize(width: 530, height: 254)
         static let screenMargin: CGFloat = 16
     }
