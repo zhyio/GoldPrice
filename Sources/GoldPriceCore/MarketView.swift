@@ -30,10 +30,8 @@ struct MarketView: View {
                 fundTable
             }
         }
-        .frame(
-            width: areFundsExpanded ? 530 : 320,
-            height: areFundsExpanded ? 350 : 56
-        )
+        .frame(width: areFundsExpanded ? 530 : 320)
+        .frame(maxHeight: .infinity, alignment: .top)
         .background(glassBackground)
     }
 
@@ -254,7 +252,7 @@ struct MarketView: View {
     }
 
     private var addFundButton: some View {
-        HStack {
+        HStack(spacing: 0) {
             Button(action: { showAddSheet = true }) {
                 HStack(spacing: 4) {
                     Image(systemName: "plus.circle.fill")
@@ -263,14 +261,14 @@ struct MarketView: View {
                         .font(.system(size: 10, weight: .medium))
                 }
                 .foregroundStyle(.white.opacity(0.4))
-                .frame(width: 190, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .frame(width: 190, alignment: .leading)
             .popover(isPresented: $showAddSheet, arrowEdge: .bottom) {
                 addFundPopover
             }
-            Spacer()
+            Spacer(minLength: 0)
         }
         .padding(.horizontal, 12)
         .frame(height: 28)

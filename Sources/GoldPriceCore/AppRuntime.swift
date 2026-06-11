@@ -5,9 +5,10 @@ import SwiftUI
 private final class AppDelegate: NSObject, NSApplicationDelegate {
     private enum Layout {
         static let collapsedSize = NSSize(width: 320, height: 56)
-        static let expandedSize = NSSize(width: 530, height: 350)
+        static let expandedWidth: CGFloat = 530
         static let screenMargin: CGFloat = 16
     }
+
 
     private var window: NSWindow!
     private var hostingView: NSHostingView<MarketView>!
@@ -55,7 +56,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         let holding = FundHolding(code: code, name: "加载中...", costBasis: costBasis, shares: 0)
         funds.holdings.append(holding)
         savePortfolio()
-        render()
+        updateWindowFrame(animate: true)
         Task {
             await refreshFunds()
             if let index = funds.holdings.firstIndex(where: { $0.code == code }),
@@ -93,7 +94,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private func deleteFund(code: String) {
         funds.holdings.removeAll { $0.code == code }
         savePortfolio()
-        render()
+        updateWindowFrame(animate: true)
     }
 
     // MARK: - Window
@@ -168,9 +169,21 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         render()
     }
 
+    private var currentSize: NSSize {
+        if !areFundsExpanded {
+            return Layout.collapsedSize
+        }
+        let height = 56 + 1 + 4 + 20 + CGFloat(funds.holdings.count) * 30 + 28 + 20
+        return NSSize(width: Layout.expandedWidth, height: min(height, NSScreen.main?.visibleFrame.height ?? 800 - 32))
+    }
+
     private func toggleFunds() {
         areFundsExpanded.toggle()
-        let newSize = areFundsExpanded ? Layout.expandedSize : Layout.collapsedSize
+        updateWindowFrame(animate: true)
+    }
+
+    private func updateWindowFrame(animate: Bool) {
+        let newSize = currentSize
         let currentFrame = window.frame
         let newFrame = NSRect(
             x: currentFrame.maxX - newSize.width,
@@ -181,7 +194,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 
         render()
         hostingView.frame = NSRect(origin: .zero, size: newSize)
-        window.setFrame(newFrame, display: true, animate: true)
+        window.setFrame(newFrame, display: true, animate: animate)
     }
 
     private func render() {
