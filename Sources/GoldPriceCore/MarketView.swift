@@ -1,6 +1,9 @@
 import SwiftUI
 
 struct MarketView: View {
+    private static let goldDetailsURL = URL(string: "https://quote.eastmoney.com/globalfuture/AU9999.html")!
+    private static let indexDetailsURL = URL(string: "https://quote.eastmoney.com/unify/r/1.000001")!
+
     let market: MarketSnapshot
 
     var body: some View {
@@ -9,14 +12,16 @@ struct MarketView: View {
                 label: "金价",
                 labelColor: Color(hex: "FFD700"),
                 price: formattedPrice(market.gold, prefix: "¥"),
-                quote: market.gold
+                quote: market.gold,
+                destination: Self.goldDetailsURL
             )
 
             row(
                 label: "上证",
                 labelColor: Color(hex: "60A5FA"),
                 price: formattedPrice(market.shanghaiIndex),
-                quote: market.shanghaiIndex
+                quote: market.shanghaiIndex,
+                destination: Self.indexDetailsURL
             )
         }
         .padding(.horizontal, 12)
@@ -26,7 +31,13 @@ struct MarketView: View {
     }
 
     @ViewBuilder
-    private func row(label: String, labelColor: Color, price: String, quote: MarketQuote?) -> some View {
+    private func row(
+        label: String,
+        labelColor: Color,
+        price: String,
+        quote: MarketQuote?,
+        destination: URL
+    ) -> some View {
         HStack(spacing: 8) {
             Circle()
                 .fill(labelColor)
@@ -36,9 +47,15 @@ struct MarketView: View {
                 .font(.system(size: 11, weight: .medium, design: .monospaced))
                 .foregroundStyle(.white.opacity(0.55))
 
-            Text(price)
-                .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.92))
+            if quote != nil {
+                Link(destination: destination) {
+                    priceText(price)
+                }
+                .buttonStyle(.plain)
+                .help("在东方财富查看\(label)行情")
+            } else {
+                priceText(price)
+            }
 
             Spacer(minLength: 0)
 
@@ -52,6 +69,12 @@ struct MarketView: View {
                 .foregroundStyle(trendColor(quote.trend))
             }
         }
+    }
+
+    private func priceText(_ price: String) -> some View {
+        Text(price)
+            .font(.system(size: 13, weight: .semibold, design: .monospaced))
+            .foregroundStyle(.white.opacity(0.92))
     }
 
     @ViewBuilder
