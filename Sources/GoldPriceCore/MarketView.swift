@@ -22,58 +22,134 @@ struct MarketView: View {
             }
         }
         .frame(
-            width: areFundsExpanded ? 530 : 320,
-            height: areFundsExpanded ? 254 : 52
+            width: areFundsExpanded ? 530 : 380,
+            height: areFundsExpanded ? 264 : 62
         )
         .background(glassBackground)
     }
 
     private var marketHeader: some View {
-        HStack(spacing: 8) {
-            VStack(spacing: 6) {
-                row(
-                    label: "金价",
-                    labelColor: Color(hex: "FFD700"),
-                    price: formattedPrice(market.gold, prefix: "¥"),
-                    quote: market.gold,
-                    destination: Self.goldDetailsURL
-                )
-
-                row(
-                    label: "上证",
-                    labelColor: Color(hex: "60A5FA"),
-                    price: formattedPrice(market.shanghaiIndex),
-                    quote: market.shanghaiIndex,
-                    destination: Self.indexDetailsURL
-                )
-            }
-            .frame(width: 190)
+        HStack(spacing: 0) {
+            goldColumn
+            columnDivider
+            indexColumn
+            columnDivider
+            earningsColumn
 
             Spacer(minLength: 0)
-
-            if areFundsExpanded {
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text("基金持仓")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.9))
-                    todayEarningsLabel
-                }
-            } else {
-                todayEarningsView
-            }
 
             Button(action: onToggleFunds) {
                 Image(systemName: areFundsExpanded ? "chevron.up" : "chevron.down")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(.white.opacity(0.7))
-                    .frame(width: 18, height: 32)
+                    .frame(width: 24, height: 62)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help(areFundsExpanded ? "收起基金列表" : "展开基金列表")
         }
-        .padding(.horizontal, 8)
-        .frame(height: 52)
+        .padding(.leading, 14)
+        .padding(.trailing, 4)
+        .frame(height: 62)
+    }
+
+    // MARK: - Metric Columns
+
+    private var goldColumn: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            metricLabel("金价", color: Color(hex: "FFD700"))
+            if market.gold != nil {
+                PriceLink(
+                    price: formattedPrice(market.gold, prefix: "¥"),
+                    label: "金价",
+                    destination: Self.goldDetailsURL
+                )
+            } else {
+                metricPlaceholder
+            }
+            if let gold = market.gold {
+                metricChange(trend: gold.trend, text: gold.formattedChangePercent)
+            } else {
+                metricSubtitle("--")
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var indexColumn: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            metricLabel("上证", color: Color(hex: "60A5FA"))
+            if market.shanghaiIndex != nil {
+                PriceLink(
+                    price: formattedPrice(market.shanghaiIndex),
+                    label: "上证",
+                    destination: Self.indexDetailsURL
+                )
+            } else {
+                metricPlaceholder
+            }
+            if let index = market.shanghaiIndex {
+                metricChange(trend: index.trend, text: index.formattedChangePercent)
+            } else {
+                metricSubtitle("--")
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var earningsColumn: some View {
+        let earnings = todayEstimatedEarnings
+        let trend = earnings.map(Trend.init(value:)) ?? .flat
+        let dotColor = earnings.map { trendColor(Trend(value: $0)) } ?? Color(hex: "9CA3AF")
+        let valueColor: Color = earnings == nil ? .white.opacity(0.35) : trendColor(trend)
+        return VStack(alignment: .leading, spacing: 3) {
+            metricLabel("今日", color: dotColor)
+            Text(formattedEarnings(earnings))
+                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                .foregroundStyle(valueColor)
+            metricSubtitle("基金估算")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: - Metric Helpers
+
+    private func metricLabel(_ text: String, color: Color) -> some View {
+        HStack(spacing: 4) {
+            Circle().fill(color).frame(width: 5, height: 5)
+            Text(text)
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(.white.opacity(0.5))
+        }
+    }
+
+    private func metricChange(trend: Trend, text: String) -> some View {
+        HStack(spacing: 2) {
+            Text(trendSymbol(trend))
+                .font(.system(size: trend == .flat ? 8 : 6, weight: .bold))
+            Text(text)
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
+        }
+        .foregroundStyle(trendColor(trend))
+    }
+
+    private func metricSubtitle(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 9, weight: .medium))
+            .foregroundStyle(.white.opacity(0.3))
+    }
+
+    private var metricPlaceholder: some View {
+        Text("--")
+            .font(.system(size: 13, weight: .semibold, design: .monospaced))
+            .foregroundStyle(.white.opacity(0.35))
+    }
+
+    private var columnDivider: some View {
+        Rectangle()
+            .fill(.white.opacity(0.08))
+            .frame(width: 1, height: 32)
+            .padding(.horizontal, 10)
     }
 
     private var fundTable: some View {
@@ -150,52 +226,7 @@ struct MarketView: View {
         .frame(height: 30)
     }
 
-    @ViewBuilder
-    private func row(
-        label: String,
-        labelColor: Color,
-        price: String,
-        quote: MarketQuote?,
-        destination: URL
-    ) -> some View {
-        HStack(spacing: 8) {
-            Circle()
-                .fill(labelColor)
-                .frame(width: 5, height: 5)
 
-            Text(label)
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.55))
-
-            if quote != nil {
-                PriceLink(
-                    price: price,
-                    label: label,
-                    destination: destination
-                )
-            } else {
-                priceText(price)
-            }
-
-            Spacer(minLength: 0)
-
-            if let quote {
-                HStack(spacing: 2) {
-                    Text(trendSymbol(quote.trend))
-                        .font(.system(size: quote.trend == .flat ? 9 : 7, weight: .bold))
-                    Text(quote.formattedChangePercent)
-                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                }
-                .foregroundStyle(trendColor(quote.trend))
-            }
-        }
-    }
-
-    private func priceText(_ price: String) -> some View {
-        Text(price)
-            .font(.system(size: 13, weight: .semibold, design: .monospaced))
-            .foregroundStyle(.white.opacity(0.92))
-    }
 
     @ViewBuilder
     private var glassBackground: some View {
@@ -240,30 +271,7 @@ struct MarketView: View {
         }
     }
 
-    private var todayEarningsView: some View {
-        let earnings = todayEstimatedEarnings
-        let trend = earnings.map(Trend.init(value:)) ?? .flat
-        return VStack(alignment: .trailing, spacing: 2) {
-            Text("今日")
-                .font(.system(size: 9))
-                .foregroundStyle(.white.opacity(0.5))
-            Text(formattedEarnings(earnings))
-                .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                .foregroundStyle(earnings == nil ? .white.opacity(0.35) : trendColor(trend))
-        }
-    }
 
-    private var todayEarningsLabel: some View {
-        let earnings = todayEstimatedEarnings
-        let trend = earnings.map(Trend.init(value:)) ?? .flat
-        return HStack(spacing: 3) {
-            Text("今日")
-                .foregroundStyle(.white.opacity(0.42))
-            Text(formattedEarnings(earnings))
-                .foregroundStyle(earnings == nil ? .white.opacity(0.42) : trendColor(trend))
-        }
-        .font(.system(size: 9))
-    }
 
     private func formattedEarnings(_ value: Double?) -> String {
         guard let value else { return "--" }
