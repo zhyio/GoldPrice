@@ -184,6 +184,7 @@ struct MarketView: View {
     private var fundTableHeader: some View {
         HStack(spacing: 0) {
             Text("名称").frame(width: 190, alignment: .leading)
+            Spacer(minLength: 0)
             Text("本金").frame(width: 85, alignment: .trailing)
             Text("收益").frame(width: 85, alignment: .trailing)
             Text("今日").frame(width: 75, alignment: .trailing)
@@ -228,6 +229,8 @@ struct MarketView: View {
                 .frame(width: 75, alignment: .trailing)
                 .help(holding.estimateTime.map { "估值时间：\($0)" } ?? "暂无盘中估值")
 
+            Spacer(minLength: 0)
+
             Button(action: { adjustingFundCode = holding.code }) {
                 Image(systemName: "ellipsis")
                     .font(.system(size: 9, weight: .bold))
@@ -259,12 +262,13 @@ struct MarketView: View {
                         .font(.system(size: 10))
                     Text("添加基金")
                         .font(.system(size: 10, weight: .medium))
+                    Spacer()
                 }
                 .foregroundStyle(.white.opacity(0.4))
+                .frame(width: 190)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .frame(width: 190, alignment: .leading)
             .popover(isPresented: $showAddSheet, arrowEdge: .bottom) {
                 addFundPopover
             }
