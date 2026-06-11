@@ -9,16 +9,19 @@ struct MarketView: View {
     let market: MarketSnapshot
     let funds: FundPortfolio
     let areFundsExpanded: Bool
+    let portfolioStatusMessage: String?
     let onToggleFunds: () -> Void
-    let onAddFund: (String, Double) -> Void
-    let onAdjustFund: (String, Double, Bool) -> Void
-    let onDeleteFund: (String) -> Void
+    let onAddFund: (String, Double) -> String?
+    let onAdjustFund: (String, Double, Bool) -> String?
+    let onDeleteFund: (String) -> String?
 
     @State private var showAddSheet = false
     @State private var addCode = ""
     @State private var addAmount = ""
+    @State private var addErrorMessage: String?
     @State private var adjustingFundCode: String? = nil
     @State private var adjustAmount = ""
+    @State private var adjustErrorMessage: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -185,7 +188,7 @@ struct MarketView: View {
         HStack(spacing: 0) {
             Text("名称").frame(width: 190, alignment: .leading)
             Spacer(minLength: 0)
-            Text("本金").frame(width: 85, alignment: .trailing)
+            Text("持仓").frame(width: 85, alignment: .trailing)
             Text("收益").frame(width: 85, alignment: .trailing)
             Text("今日").frame(width: 75, alignment: .trailing)
             Spacer().frame(width: 24)
@@ -217,6 +220,8 @@ struct MarketView: View {
             .frame(width: 190, alignment: .leading)
             .help("点击查看 \(holding.name) 详情")
 
+            Spacer(minLength: 0)
+
             Text(holding.formattedCostBasis)
                 .frame(width: 85, alignment: .trailing)
 
@@ -229,8 +234,6 @@ struct MarketView: View {
                 .frame(width: 75, alignment: .trailing)
                 .help(holding.estimateTime.map { "估值时间：\($0)" } ?? "暂无盘中估值")
 
-            Spacer(minLength: 0)
-
             Button(action: { adjustingFundCode = holding.code }) {
                 Image(systemName: "ellipsis")
                     .font(.system(size: 9, weight: .bold))
@@ -242,7 +245,13 @@ struct MarketView: View {
             .popover(
                 isPresented: Binding(
                     get: { adjustingFundCode == holding.code },
-                    set: { if !$0 { adjustingFundCode = nil; adjustAmount = "" } }
+                    set: {
+                        if !$0 {
+                            adjustingFundCode = nil
+                            adjustAmount = ""
+                            adjustErrorMessage = nil
+                        }
+                    }
                 ),
                 arrowEdge: .trailing
             ) {
@@ -282,7 +291,12 @@ struct MarketView: View {
         HStack {
             Text("收益和今日盈亏基于盘中估算净值计算")
             Spacer()
-            Text(fundUpdateText)
+            Text(portfolioStatusMessage ?? fundUpdateText)
+                .foregroundStyle(
+                    portfolioStatusMessage == nil
+                        ? Color.white.opacity(0.35)
+                        : Color(hex: "F59E0B")
+                )
         }
         .font(.system(size: 8))
         .foregroundStyle(.white.opacity(0.35))
@@ -301,24 +315,38 @@ struct MarketView: View {
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 160)
 
-            TextField("本金金额", text: $addAmount)
+            TextField("持仓金额", text: $addAmount)
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 160)
+
+            if let addErrorMessage {
+                Text(addErrorMessage)
+                    .font(.system(size: 9))
+                    .foregroundStyle(.red)
+                    .multilineTextAlignment(.center)
+            }
 
             HStack(spacing: 12) {
                 Button("取消") {
                     showAddSheet = false
                     addCode = ""
                     addAmount = ""
+                    addErrorMessage = nil
                 }
 
                 Button("添加") {
-                    guard let amount = Double(addAmount), amount > 0,
-                          !addCode.isEmpty else { return }
-                    onAddFund(addCode.trimmingCharacters(in: .whitespaces), amount)
+                    guard let amount = Double(addAmount) else {
+                        addErrorMessage = FundOperationError.invalidAmount.localizedDescription
+                        return
+                    }
+                    if let error = onAddFund(addCode, amount) {
+                        addErrorMessage = error
+                        return
+                    }
                     showAddSheet = false
                     addCode = ""
                     addAmount = ""
+                    addErrorMessage = nil
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(Color(hex: "3B82F6"))
@@ -335,7 +363,7 @@ struct MarketView: View {
                 .lineLimit(1)
 
             HStack(spacing: 4) {
-                Text("当前本金")
+                Text("当前持仓")
                     .foregroundStyle(.secondary)
                 Text(holding.formattedCostBasis)
             }
@@ -345,20 +373,41 @@ struct MarketView: View {
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 140)
 
+            if let adjustErrorMessage {
+                Text(adjustErrorMessage)
+                    .font(.system(size: 9))
+                    .foregroundStyle(.red)
+                    .multilineTextAlignment(.center)
+            }
+
             HStack(spacing: 12) {
                 Button("减仓") {
-                    guard let amount = Double(adjustAmount), amount > 0 else { return }
-                    onAdjustFund(holding.code, amount, false)
+                    guard let amount = Double(adjustAmount) else {
+                        adjustErrorMessage = FundOperationError.invalidAmount.localizedDescription
+                        return
+                    }
+                    if let error = onAdjustFund(holding.code, amount, false) {
+                        adjustErrorMessage = error
+                        return
+                    }
                     adjustingFundCode = nil
                     adjustAmount = ""
+                    adjustErrorMessage = nil
                 }
                 .foregroundStyle(Color(hex: "00A870"))
 
                 Button("加仓") {
-                    guard let amount = Double(adjustAmount), amount > 0 else { return }
-                    onAdjustFund(holding.code, amount, true)
+                    guard let amount = Double(adjustAmount) else {
+                        adjustErrorMessage = FundOperationError.invalidAmount.localizedDescription
+                        return
+                    }
+                    if let error = onAdjustFund(holding.code, amount, true) {
+                        adjustErrorMessage = error
+                        return
+                    }
                     adjustingFundCode = nil
                     adjustAmount = ""
+                    adjustErrorMessage = nil
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(Color(hex: "FF4D4F"))
@@ -367,8 +416,12 @@ struct MarketView: View {
             Divider()
 
             Button(action: {
-                onDeleteFund(holding.code)
+                if let error = onDeleteFund(holding.code) {
+                    adjustErrorMessage = error
+                    return
+                }
                 adjustingFundCode = nil
+                adjustErrorMessage = nil
             }) {
                 HStack(spacing: 4) {
                     Image(systemName: "trash")

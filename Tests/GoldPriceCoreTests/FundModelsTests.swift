@@ -84,4 +84,35 @@ struct FundModelsTests {
         #expect(decoded.todayChangePercent == nil)
         #expect(decoded.estimateTime == nil)
     }
+
+    @Test("Formatting handles grouping, zero, and negative values")
+    func amountFormatting() {
+        #expect(FundHolding.formatAmount(123_456.789) == "123,456.79")
+        #expect(FundHolding.formatSigned(0) == "0.00")
+        #expect(FundHolding.formatSigned(-12.5) == "-12.50")
+    }
+
+    @Test("Today change needs positive shares and previous NAV")
+    func todayChangeRequirements() {
+        var holding = FundHolding(code: "008702", name: "Test", costBasis: 100, shares: 0)
+        holding.estimatedNAV = 2
+        holding.previousNAV = 1
+        #expect(holding.todayChange == nil)
+
+        holding.shares = 10
+        holding.previousNAV = 0
+        #expect(holding.todayChange == nil)
+    }
+
+    @Test("Estimate numeric fields reject invalid and non-positive values")
+    func estimateValidation() throws {
+        let invalid = try JSONDecoder().decode(
+            FundEstimateResponse.self,
+            from: Data(#"{"fundcode":"008702","dwjz":"0","gsz":"-1","gszzl":"not-a-number","gztime":"now"}"#.utf8)
+        )
+
+        #expect(invalid.changePercent == nil)
+        #expect(invalid.navValue == nil)
+        #expect(invalid.prevNavValue == nil)
+    }
 }

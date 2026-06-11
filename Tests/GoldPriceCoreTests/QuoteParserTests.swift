@@ -47,4 +47,30 @@ struct QuoteParserTests {
 
         #expect(QuoteParser.parseEastMoney(response) == nil)
     }
+
+    @Test("Rejects invalid precision and non-positive current prices")
+    func rejectsInvalidPrecisionAndPrice() {
+        #expect(QuoteParser.parseEastMoney(
+            #"{"data":{"f43":88940,"f59":9,"f60":91563,"f169":-2623,"f170":-286}}"#
+        ) == nil)
+        #expect(QuoteParser.parseEastMoney(
+            #"{"data":{"f43":0,"f59":2,"f60":91563,"f169":-2623,"f170":-286}}"#
+        ) == nil)
+        #expect(QuoteParser.parseEastMoney(
+            #"{"data":{"f43":-1,"f59":2,"f60":91563,"f169":-2623,"f170":-286}}"#
+        ) == nil)
+    }
+
+    @Test("Supports precision zero and eight")
+    func supportsPrecisionBounds() {
+        let integerQuote = QuoteParser.parseEastMoney(
+            #"{"data":{"f43":100,"f59":0,"f60":99,"f169":1,"f170":101}}"#
+        )
+        let preciseQuote = QuoteParser.parseEastMoney(
+            #"{"data":{"f43":123456789,"f59":8,"f60":100000000,"f169":23456789,"f170":2346}}"#
+        )
+
+        #expect(integerQuote?.price == 100)
+        #expect(abs((preciseQuote?.price ?? 0) - 1.23456789) < 0.000000001)
+    }
 }

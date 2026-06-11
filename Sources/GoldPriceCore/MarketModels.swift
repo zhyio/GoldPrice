@@ -68,6 +68,7 @@ struct EastMoneyQuote: Decodable, Equatable, Sendable {
         guard precision >= 0,
               precision <= 8,
               current.isFinite,
+              current > 0,
               comparisonBase.isFinite,
               comparisonBase > 0,
               changeAmount.isFinite,

@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -44,6 +44,11 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << 'EOF'
 EOF
 
 echo -n "APPL????" > "$APP_BUNDLE/Contents/PkgInfo"
+
+echo "🔏 Signing and verifying app bundle..."
+codesign --force --deep --sign - "$APP_BUNDLE"
+plutil -lint "$APP_BUNDLE/Contents/Info.plist"
+codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
 
 echo ""
 echo "✅ Done! App bundle created: $APP_BUNDLE"

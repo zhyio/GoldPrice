@@ -16,11 +16,13 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private var funds = FundPortfolio.empty
     private let marketService = MarketService()
     private let fundService = FundService()
+    private let fundStorage = FundStorage.live()
     private var marketTimer: Timer?
     private var fundTimer: Timer?
     private var isRefreshingMarket = false
     private var isRefreshingFunds = false
     private var areFundsExpanded = false
+    private var storageNotice: String?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         loadPortfolio()
@@ -36,65 +38,71 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Portfolio Persistence
 
     private func loadPortfolio() {
-        if FundStorage.hasExistingData {
-            let holdings = FundStorage.load()
-            funds = FundPortfolio(holdings: holdings, updatedAt: nil, isLoading: true)
-        } else {
-            funds = FundPortfolio.migrateDefaults()
-            FundStorage.save(funds.holdings)
+        let defaults = FundPortfolio.migrateDefaults().holdings
+        do {
+            switch try fundStorage.loadRecovering(defaults: defaults) {
+            case .missing:
+                funds = FundPortfolio(holdings: defaults, updatedAt: nil, isLoading: true)
+                try fundStorage.save(defaults)
+            case let .loaded(holdings):
+                funds = FundPortfolio(holdings: holdings, updatedAt: nil, isLoading: true)
+            case let .recovered(holdings, backupURL):
+                funds = FundPortfolio(holdings: holdings, updatedAt: nil, isLoading: true)
+                storageNotice = "持仓文件损坏，已备份为 \(backupURL.lastPathComponent)"
+            }
+        } catch {
+            funds = FundPortfolio(holdings: defaults, updatedAt: nil, isLoading: true)
+            storageNotice = error.localizedDescription
         }
     }
 
-    private func savePortfolio() {
-        FundStorage.save(funds.holdings)
+    private func savePortfolio() throws {
+        try fundStorage.save(funds.holdings)
     }
 
     // MARK: - Fund Management
 
-    private func addFund(code: String, costBasis: Double) {
-        guard !funds.holdings.contains(where: { $0.code == code }) else { return }
-        let holding = FundHolding(code: code, name: "加载中...", costBasis: costBasis, shares: 0)
-        funds.holdings.append(holding)
-        savePortfolio()
-        updateWindowFrame(animate: true)
-        Task {
-            await refreshFunds()
-            if let index = funds.holdings.firstIndex(where: { $0.code == code }),
-               funds.holdings[index].name == "加载中..." {
-                funds.holdings[index].name = "未找到(请删除重试)"
-                savePortfolio()
-                render()
-            }
+    private func addFund(code: String, costBasis: Double) -> String? {
+        var updated = funds
+        do {
+            try updated.addFund(code: code, costBasis: costBasis)
+            try fundStorage.save(updated.holdings)
+        } catch {
+            return error.localizedDescription
         }
+
+        funds = updated
+        updateWindowFrame(animate: true)
+        Task { await refreshFunds() }
+        return nil
     }
 
-    private func adjustFund(code: String, amount: Double, isIncrease: Bool) {
-        guard let index = funds.holdings.firstIndex(where: { $0.code == code }) else { return }
-        let holding = funds.holdings[index]
-        let nav = holding.estimatedNAV ?? holding.previousNAV
-
-        if isIncrease {
-            funds.holdings[index].costBasis += amount
-            if let nav, nav > 0 {
-                funds.holdings[index].shares += amount / nav
-            }
-        } else {
-            guard let nav, nav > 0, holding.shares > 0 else { return }
-            let sharesToSell = amount / nav
-            guard sharesToSell <= holding.shares else { return }
-            let proportionalCost = (sharesToSell / holding.shares) * holding.costBasis
-            funds.holdings[index].costBasis -= proportionalCost
-            funds.holdings[index].shares -= sharesToSell
+    private func adjustFund(code: String, amount: Double, isIncrease: Bool) -> String? {
+        var updated = funds
+        do {
+            try updated.adjustFund(code: code, amount: amount, isIncrease: isIncrease)
+            try fundStorage.save(updated.holdings)
+        } catch {
+            return error.localizedDescription
         }
 
-        savePortfolio()
+        funds = updated
         render()
+        return nil
     }
 
-    private func deleteFund(code: String) {
-        funds.holdings.removeAll { $0.code == code }
-        savePortfolio()
+    private func deleteFund(code: String) -> String? {
+        var updated = funds
+        do {
+            try updated.deleteFund(code: code)
+            try fundStorage.save(updated.holdings)
+        } catch {
+            return error.localizedDescription
+        }
+
+        funds = updated
         updateWindowFrame(animate: true)
+        return nil
     }
 
     // MARK: - Window
@@ -120,10 +128,13 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         window.backgroundColor = .clear
         window.hasShadow = false
         window.collectionBehavior = [.canJoinAllSpaces, .stationary]
-        window.isMovableByWindowBackground = true
+        window.isMovableByWindowBackground = false
 
         hostingView = NSHostingView(rootView: makeRootView())
         hostingView.frame = NSRect(origin: .zero, size: size)
+        hostingView.addGestureRecognizer(
+            NSPanGestureRecognizer(target: self, action: #selector(handleWindowPan(_:)))
+        )
         window.contentView = hostingView
         window.orderFrontRegardless()
     }
@@ -165,7 +176,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         defer { isRefreshingFunds = false }
 
         funds = await fundService.fetch(current: funds)
-        savePortfolio()
+        do {
+            try savePortfolio()
+        } catch {
+            storageNotice = error.localizedDescription
+        }
         render()
     }
 
@@ -197,6 +212,17 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         window.setFrame(newFrame, display: true, animate: animate)
     }
 
+    @objc
+    private func handleWindowPan(_ recognizer: NSPanGestureRecognizer) {
+        guard recognizer.state == .changed || recognizer.state == .ended else { return }
+        let translation = recognizer.translation(in: hostingView)
+        let origin = window.frame.origin
+        window.setFrameOrigin(
+            NSPoint(x: origin.x + translation.x, y: origin.y - translation.y)
+        )
+        recognizer.setTranslation(.zero, in: hostingView)
+    }
+
     private func render() {
         hostingView.rootView = makeRootView()
     }
@@ -206,6 +232,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             market: market,
             funds: funds,
             areFundsExpanded: areFundsExpanded,
+            portfolioStatusMessage: storageNotice,
             onToggleFunds: { [weak self] in self?.toggleFunds() },
             onAddFund: { [weak self] code, amount in self?.addFund(code: code, costBasis: amount) },
             onAdjustFund: { [weak self] code, amount, isIncrease in self?.adjustFund(code: code, amount: amount, isIncrease: isIncrease) },
