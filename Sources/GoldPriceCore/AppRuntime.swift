@@ -5,13 +5,14 @@ import SwiftUI
 private final class AppDelegate: NSObject, NSApplicationDelegate {
     private enum Layout {
         static let collapsedSize = NSSize(width: 320, height: 56)
-        static let expandedWidth: CGFloat = 530
+        static let expandedWidth: CGFloat = 485
         static let screenMargin: CGFloat = 16
     }
 
 
     private var window: NSWindow!
     private var hostingView: NSHostingView<MarketView>!
+    private var statusItem: NSStatusItem!
     private var market = MarketSnapshot()
     private var funds = FundPortfolio.empty
     private let marketService = MarketService()
@@ -27,6 +28,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         loadPortfolio()
         setupWindow()
+        setupStatusBar()
         startFetching()
     }
 
@@ -128,15 +130,38 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         window.backgroundColor = .clear
         window.hasShadow = false
         window.collectionBehavior = [.canJoinAllSpaces, .stationary]
-        window.isMovableByWindowBackground = false
+        window.isMovableByWindowBackground = true
 
         hostingView = NSHostingView(rootView: makeRootView())
         hostingView.frame = NSRect(origin: .zero, size: size)
-        hostingView.addGestureRecognizer(
-            NSPanGestureRecognizer(target: self, action: #selector(handleWindowPan(_:)))
-        )
         window.contentView = hostingView
         window.orderFrontRegardless()
+    }
+
+    private func setupStatusBar() {
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        if let button = statusItem.button {
+            button.image = NSImage(systemSymbolName: "chart.xyaxis.line", accessibilityDescription: "GoldPrice")
+        }
+
+        let menu = NSMenu()
+        menu.addItem(NSMenuItem(title: "显示/隐藏", action: #selector(toggleVisibility), keyEquivalent: "h"))
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(NSMenuItem(title: "退出应用", action: #selector(quitApp), keyEquivalent: "q"))
+
+        statusItem.menu = menu
+    }
+
+    @objc private func toggleVisibility() {
+        if window.isVisible {
+            window.orderOut(nil)
+        } else {
+            window.orderFrontRegardless()
+        }
+    }
+
+    @objc private func quitApp() {
+        NSApplication.shared.terminate(nil)
     }
 
     // MARK: - Data Fetching
@@ -212,16 +237,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         window.setFrame(newFrame, display: true, animate: animate)
     }
 
-    @objc
-    private func handleWindowPan(_ recognizer: NSPanGestureRecognizer) {
-        guard recognizer.state == .changed || recognizer.state == .ended else { return }
-        let translation = recognizer.translation(in: hostingView)
-        let origin = window.frame.origin
-        window.setFrameOrigin(
-            NSPoint(x: origin.x + translation.x, y: origin.y - translation.y)
-        )
-        recognizer.setTranslation(.zero, in: hostingView)
-    }
+
 
     private func render() {
         hostingView.rootView = makeRootView()
