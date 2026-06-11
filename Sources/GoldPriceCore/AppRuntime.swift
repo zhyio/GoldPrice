@@ -3,12 +3,23 @@ import SwiftUI
 
 @MainActor
 private final class AppDelegate: NSObject, NSApplicationDelegate {
+    private enum Layout {
+        static let collapsedSize = NSSize(width: 232, height: 52)
+        static let expandedSize = NSSize(width: 530, height: 254)
+        static let screenMargin: CGFloat = 16
+    }
+
     private var window: NSWindow!
     private var hostingView: NSHostingView<MarketView>!
     private var market = MarketSnapshot()
-    private let service = MarketService()
-    private var timer: Timer?
-    private var isRefreshing = false
+    private var funds = FundPortfolio.initial
+    private let marketService = MarketService()
+    private let fundService = FundService()
+    private var marketTimer: Timer?
+    private var fundTimer: Timer?
+    private var isRefreshingMarket = false
+    private var isRefreshingFunds = false
+    private var areFundsExpanded = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupWindow()
@@ -16,21 +27,20 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        timer?.invalidate()
+        marketTimer?.invalidate()
+        fundTimer?.invalidate()
     }
 
     private func setupWindow() {
         let screen = NSScreen.main ?? NSScreen.screens[0]
-        let width: CGFloat = 212
-        let height: CGFloat = 52
-        let margin: CGFloat = 16
+        let size = Layout.collapsedSize
 
         window = NSWindow(
             contentRect: NSRect(
-                x: screen.visibleFrame.maxX - width - margin,
-                y: screen.visibleFrame.maxY - height - margin,
-                width: width,
-                height: height
+                x: screen.visibleFrame.maxX - size.width - Layout.screenMargin,
+                y: screen.visibleFrame.maxY - size.height - Layout.screenMargin,
+                width: size.width,
+                height: size.height
             ),
             styleMask: [.borderless],
             backing: .buffered,
@@ -44,28 +54,79 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         window.collectionBehavior = [.canJoinAllSpaces, .stationary]
         window.isMovableByWindowBackground = true
 
-        hostingView = NSHostingView(rootView: MarketView(market: market))
-        hostingView.frame = NSRect(x: 0, y: 0, width: width, height: height)
+        hostingView = NSHostingView(rootView: makeRootView())
+        hostingView.frame = NSRect(origin: .zero, size: size)
         window.contentView = hostingView
         window.orderFrontRegardless()
     }
 
     private func startFetching() {
-        Task { await refresh() }
-        timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+        Task {
+            async let marketRefresh: Void = refreshMarket()
+            async let fundRefresh: Void = refreshFunds()
+            _ = await (marketRefresh, fundRefresh)
+        }
+
+        marketTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
-                await self?.refresh()
+                await self?.refreshMarket()
+            }
+        }
+
+        fundTimer = Timer.scheduledTimer(withTimeInterval: 60 * 60, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                await self?.refreshFunds()
             }
         }
     }
 
-    private func refresh() async {
-        guard !isRefreshing else { return }
-        isRefreshing = true
-        defer { isRefreshing = false }
+    private func refreshMarket() async {
+        guard !isRefreshingMarket else { return }
+        isRefreshingMarket = true
+        defer { isRefreshingMarket = false }
 
-        market = await service.fetch(current: market)
-        hostingView.rootView = MarketView(market: market)
+        market = await marketService.fetch(current: market)
+        render()
+    }
+
+    private func refreshFunds() async {
+        guard !isRefreshingFunds else { return }
+        isRefreshingFunds = true
+        defer { isRefreshingFunds = false }
+
+        funds = await fundService.fetch(current: funds)
+        render()
+    }
+
+    private func toggleFunds() {
+        areFundsExpanded.toggle()
+        let newSize = areFundsExpanded ? Layout.expandedSize : Layout.collapsedSize
+        let currentFrame = window.frame
+        let newFrame = NSRect(
+            x: currentFrame.maxX - newSize.width,
+            y: currentFrame.maxY - newSize.height,
+            width: newSize.width,
+            height: newSize.height
+        )
+
+        render()
+        hostingView.frame = NSRect(origin: .zero, size: newSize)
+        window.setFrame(newFrame, display: true, animate: true)
+    }
+
+    private func render() {
+        hostingView.rootView = makeRootView()
+    }
+
+    private func makeRootView() -> MarketView {
+        MarketView(
+            market: market,
+            funds: funds,
+            areFundsExpanded: areFundsExpanded,
+            onToggleFunds: { [weak self] in
+                self?.toggleFunds()
+            }
+        )
     }
 }
 

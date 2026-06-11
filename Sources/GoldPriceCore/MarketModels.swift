@@ -4,6 +4,16 @@ enum Trend: Equatable, Sendable {
     case up
     case down
     case flat
+
+    init(value: Double) {
+        if value > 0 {
+            self = .up
+        } else if value < 0 {
+            self = .down
+        } else {
+            self = .flat
+        }
+    }
 }
 
 struct MarketQuote: Equatable, Sendable {
@@ -13,9 +23,7 @@ struct MarketQuote: Equatable, Sendable {
     let changePercent: Double
 
     var trend: Trend {
-        if changePercent > 0 { return .up }
-        if changePercent < 0 { return .down }
-        return .flat
+        Trend(value: changePercent)
     }
 
     var formattedChangePercent: String {
