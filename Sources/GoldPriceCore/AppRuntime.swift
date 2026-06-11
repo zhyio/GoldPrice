@@ -4,15 +4,15 @@ import SwiftUI
 @MainActor
 private final class AppDelegate: NSObject, NSApplicationDelegate {
     private enum Layout {
-        static let collapsedSize = NSSize(width: 380, height: 62)
-        static let expandedSize = NSSize(width: 530, height: 264)
+        static let collapsedSize = NSSize(width: 360, height: 56)
+        static let expandedSize = NSSize(width: 530, height: 290)
         static let screenMargin: CGFloat = 16
     }
 
     private var window: NSWindow!
     private var hostingView: NSHostingView<MarketView>!
     private var market = MarketSnapshot()
-    private var funds = FundPortfolio.initial
+    private var funds = FundPortfolio.empty
     private let marketService = MarketService()
     private let fundService = FundService()
     private var marketTimer: Timer?
@@ -22,6 +22,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private var areFundsExpanded = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        loadPortfolio()
         setupWindow()
         startFetching()
     }
@@ -30,6 +31,64 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         marketTimer?.invalidate()
         fundTimer?.invalidate()
     }
+
+    // MARK: - Portfolio Persistence
+
+    private func loadPortfolio() {
+        if FundStorage.hasExistingData {
+            let holdings = FundStorage.load()
+            funds = FundPortfolio(holdings: holdings, updatedAt: nil, isLoading: true)
+        } else {
+            funds = FundPortfolio.migrateDefaults()
+            FundStorage.save(funds.holdings)
+        }
+    }
+
+    private func savePortfolio() {
+        FundStorage.save(funds.holdings)
+    }
+
+    // MARK: - Fund Management
+
+    private func addFund(code: String, costBasis: Double) {
+        guard !funds.holdings.contains(where: { $0.code == code }) else { return }
+        let holding = FundHolding(code: code, name: "加载中...", costBasis: costBasis, shares: 0)
+        funds.holdings.append(holding)
+        savePortfolio()
+        render()
+        Task { await refreshFunds() }
+    }
+
+    private func adjustFund(code: String, amount: Double, isIncrease: Bool) {
+        guard let index = funds.holdings.firstIndex(where: { $0.code == code }) else { return }
+        let holding = funds.holdings[index]
+        let nav = holding.estimatedNAV ?? holding.previousNAV
+
+        if isIncrease {
+            funds.holdings[index].costBasis += amount
+            if let nav, nav > 0 {
+                funds.holdings[index].shares += amount / nav
+            }
+        } else {
+            guard let nav, nav > 0, holding.shares > 0 else { return }
+            let sharesToSell = amount / nav
+            guard sharesToSell <= holding.shares else { return }
+            let proportionalCost = (sharesToSell / holding.shares) * holding.costBasis
+            funds.holdings[index].costBasis -= proportionalCost
+            funds.holdings[index].shares -= sharesToSell
+        }
+
+        savePortfolio()
+        render()
+    }
+
+    private func deleteFund(code: String) {
+        funds.holdings.removeAll { $0.code == code }
+        savePortfolio()
+        render()
+    }
+
+    // MARK: - Window
 
     private func setupWindow() {
         let screen = NSScreen.main ?? NSScreen.screens[0]
@@ -59,6 +118,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         window.contentView = hostingView
         window.orderFrontRegardless()
     }
+
+    // MARK: - Data Fetching
 
     private func startFetching() {
         Task {
@@ -95,6 +156,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         defer { isRefreshingFunds = false }
 
         funds = await fundService.fetch(current: funds)
+        savePortfolio()
         render()
     }
 
@@ -123,9 +185,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             market: market,
             funds: funds,
             areFundsExpanded: areFundsExpanded,
-            onToggleFunds: { [weak self] in
-                self?.toggleFunds()
-            }
+            onToggleFunds: { [weak self] in self?.toggleFunds() },
+            onAddFund: { [weak self] code, amount in self?.addFund(code: code, costBasis: amount) },
+            onAdjustFund: { [weak self] code, amount, isIncrease in self?.adjustFund(code: code, amount: amount, isIncrease: isIncrease) },
+            onDeleteFund: { [weak self] code in self?.deleteFund(code: code) }
         )
     }
 }

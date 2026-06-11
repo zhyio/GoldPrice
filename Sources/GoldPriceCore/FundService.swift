@@ -68,8 +68,25 @@ actor FundService {
             else {
                 continue
             }
+
             portfolio.holdings[index].todayChangePercent = changePercent
             portfolio.holdings[index].estimateTime = estimate.estimateTime
+
+            if let nav = estimate.navValue {
+                portfolio.holdings[index].estimatedNAV = nav
+            }
+            if let prevNav = estimate.prevNavValue {
+                portfolio.holdings[index].previousNAV = prevNav
+            }
+            if let name = estimate.name, !name.isEmpty {
+                portfolio.holdings[index].name = name
+            }
+
+            if portfolio.holdings[index].shares == 0,
+               portfolio.holdings[index].costBasis > 0,
+               let nav = estimate.navValue, nav > 0 {
+                portfolio.holdings[index].shares = portfolio.holdings[index].costBasis / nav
+            }
         }
 
         portfolio.isLoading = false

@@ -1,42 +1,87 @@
+import Foundation
 import Testing
 @testable import GoldPriceCore
 
 @Suite("Fund holdings")
 struct FundModelsTests {
-    @Test("Initial holdings match the supplied screenshots")
-    func initialHoldings() {
-        let holdings = FundPortfolio.initial.holdings
+    @Test("Migration defaults have correct cost bases")
+    func migrationDefaults() {
+        let holdings = FundPortfolio.migrateDefaults().holdings
 
         #expect(holdings.map(\.code) == [
             "008702", "013642", "019594", "027300", "020341"
         ])
-        #expect(holdings.map(\.amount) == [
-            500.01, 972.83, 101_781.48, 2_000, 1_000
+        #expect(holdings.map(\.costBasis) == [
+            500.00, 1_000.00, 100_069.98, 2_000.00, 1_000.00
         ])
-        #expect(holdings.map(\.profit) == [
-            0.01, -27.17, 1_711.50, 0, 0
-        ])
+        #expect(holdings.allSatisfy { $0.shares == 0 })
     }
 
-    @Test("Profit and daily change use signed formatting")
-    func signedFormatting() {
-        var holding = FundPortfolio.initial.holdings[0]
-        holding.todayChangePercent = -2.96
+    @Test("Profit calculation: estimatedValue - costBasis")
+    func profitCalculation() {
+        var holding = FundHolding(code: "008702", name: "Test", costBasis: 1000, shares: 500)
+        holding.estimatedNAV = 2.2
+        holding.previousNAV = 2.0
 
-        #expect(holding.formattedProfit == "+0.01")
-        #expect(holding.formattedTodayChange == "-2.96%")
+        #expect(holding.estimatedValue == 1100)
+        #expect(holding.profit == 100)
+        #expect(holding.formattedProfit == "+100.00")
         #expect(holding.profitTrend == .up)
-        #expect(holding.todayTrend == .down)
-
-        let largeProfit = FundPortfolio.initial.holdings[2]
-        #expect(largeProfit.formattedProfit == "+1,711.50")
     }
 
-    @Test("Missing daily estimate is displayed as unavailable")
-    func missingEstimate() {
-        let holding = FundPortfolio.initial.holdings[3]
+    @Test("Today change: shares × (estimatedNAV - previousNAV)")
+    func todayChangeCalculation() {
+        var holding = FundHolding(code: "008702", name: "Test", costBasis: 1000, shares: 500)
+        holding.estimatedNAV = 2.2
+        holding.previousNAV = 2.0
 
+        #expect(abs(holding.todayChange! - 100) < 0.001)
+        #expect(holding.formattedTodayChange == "+100.00")
+        #expect(holding.todayTrend == .up)
+    }
+
+    @Test("Missing NAV shows placeholders")
+    func missingNAV() {
+        let holding = FundHolding(code: "008702", name: "Test", costBasis: 1000, shares: 500)
+
+        #expect(holding.estimatedValue == nil)
+        #expect(holding.profit == nil)
+        #expect(holding.todayChange == nil)
+        #expect(holding.formattedProfit == "--")
         #expect(holding.formattedTodayChange == "--")
-        #expect(holding.todayTrend == nil)
+    }
+
+    @Test("Negative profit displays correctly")
+    func negativeProfit() {
+        var holding = FundHolding(code: "013642", name: "Test", costBasis: 1000, shares: 500)
+        holding.estimatedNAV = 1.8
+        holding.previousNAV = 2.0
+
+        #expect(holding.profit == -100)
+        #expect(holding.formattedProfit == "-100.00")
+        #expect(holding.profitTrend == .down)
+        #expect(abs(holding.todayChange! - (-100)) < 0.001)
+        #expect(holding.todayTrend == .down)
+    }
+
+    @Test("Codable only persists code, name, costBasis, shares")
+    func codableRoundTrip() throws {
+        var holding = FundHolding(code: "008702", name: "Test Fund", costBasis: 1000, shares: 500)
+        holding.estimatedNAV = 2.0
+        holding.previousNAV = 1.9
+        holding.todayChangePercent = 5.26
+        holding.estimateTime = "2026-06-11 13:30"
+
+        let data = try JSONEncoder().encode(holding)
+        let decoded = try JSONDecoder().decode(FundHolding.self, from: data)
+
+        #expect(decoded.code == "008702")
+        #expect(decoded.name == "Test Fund")
+        #expect(decoded.costBasis == 1000)
+        #expect(decoded.shares == 500)
+        #expect(decoded.estimatedNAV == nil)
+        #expect(decoded.previousNAV == nil)
+        #expect(decoded.todayChangePercent == nil)
+        #expect(decoded.estimateTime == nil)
     }
 }

@@ -2,43 +2,76 @@ import Foundation
 
 struct FundHolding: Equatable, Sendable {
     let code: String
-    let name: String
-    let amount: Double
-    let profit: Double
+    var name: String
+    var costBasis: Double
+    var shares: Double
+
+    var estimatedNAV: Double?
+    var previousNAV: Double?
     var todayChangePercent: Double?
     var estimateTime: String?
 
+    var estimatedValue: Double? {
+        guard let nav = estimatedNAV, nav > 0, shares > 0 else { return nil }
+        return shares * nav
+    }
+
+    var profit: Double? {
+        guard let value = estimatedValue else { return nil }
+        return value - costBasis
+    }
+
+    var todayChange: Double? {
+        guard let nav = estimatedNAV, let prevNav = previousNAV,
+              prevNav > 0, shares > 0 else { return nil }
+        return shares * (nav - prevNav)
+    }
+
     var profitTrend: Trend {
-        Trend(value: profit)
+        Trend(value: profit ?? 0)
     }
 
     var todayTrend: Trend? {
-        todayChangePercent.map(Trend.init(value:))
+        todayChange.map(Trend.init(value:))
     }
 
     var formattedProfit: String {
+        guard let profit else { return "--" }
+        return Self.formatSigned(profit)
+    }
+
+    var formattedTodayChange: String {
+        guard let change = todayChange else { return "--" }
+        return Self.formatSigned(change)
+    }
+
+    var formattedCostBasis: String {
+        Self.formatAmount(costBasis)
+    }
+
+    static func formatSigned(_ value: Double) -> String {
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
         formatter.groupingSeparator = ","
         formatter.minimumFractionDigits = 2
         formatter.maximumFractionDigits = 2
-        let formatted = formatter.string(from: NSNumber(value: profit)) ?? "0.00"
-        return profit > 0 ? "+\(formatted)" : formatted
+        let formatted = formatter.string(from: NSNumber(value: value)) ?? "0.00"
+        return value > 0 ? "+\(formatted)" : formatted
     }
 
-    var formattedTodayChange: String {
-        guard let todayChangePercent else { return "--" }
-        return Self.formatSigned(todayChangePercent, suffix: "%")
+    static func formatAmount(_ value: Double) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.groupingSeparator = ","
+        formatter.maximumFractionDigits = 2
+        formatter.minimumFractionDigits = 2
+        return formatter.string(from: NSNumber(value: value)) ?? "--"
     }
+}
 
-    private static func formatSigned(_ value: Double, suffix: String) -> String {
-        let format = value > 0 ? "+%.2f%@" : "%.2f%@"
-        return String(
-            format: format,
-            locale: Locale(identifier: "en_US_POSIX"),
-            value,
-            suffix
-        )
+extension FundHolding: Codable {
+    enum CodingKeys: String, CodingKey {
+        case code, name, costBasis, shares
     }
 }
 
@@ -47,57 +80,61 @@ struct FundPortfolio: Equatable, Sendable {
     var updatedAt: Date?
     var isLoading: Bool
 
-    static let initial = FundPortfolio(
-        holdings: [
-            FundHolding(
-                code: "008702",
-                name: "华夏黄金ETF联接C",
-                amount: 500.01,
-                profit: 0.01
-            ),
-            FundHolding(
-                code: "013642",
-                name: "博道成长智航股票C",
-                amount: 972.83,
-                profit: -27.17
-            ),
-            FundHolding(
-                code: "019594",
-                name: "嘉实稳宁纯债债券A",
-                amount: 101_781.48,
-                profit: 1_711.50
-            ),
-            FundHolding(
-                code: "027300",
-                name: "富国电子信息产业混合发起式C",
-                amount: 2_000,
-                profit: 0
-            ),
-            FundHolding(
-                code: "020341",
-                name: "工银黄金ETF联接E",
-                amount: 1_000,
-                profit: 0
-            )
-        ],
-        updatedAt: nil,
-        isLoading: true
-    )
+    static let empty = FundPortfolio(holdings: [], updatedAt: nil, isLoading: true)
+
+    static func migrateDefaults() -> FundPortfolio {
+        let defaults: [(code: String, name: String, costBasis: Double)] = [
+            ("008702", "华夏黄金ETF联接C", 500.00),
+            ("013642", "博道成长智航股票C", 1_000.00),
+            ("019594", "嘉实稳宁纯债债券A", 100_069.98),
+            ("027300", "富国电子信息产业混合发起式C", 2_000.00),
+            ("020341", "工银黄金ETF联接E", 1_000.00),
+        ]
+        return FundPortfolio(
+            holdings: defaults.map {
+                FundHolding(code: $0.code, name: $0.name, costBasis: $0.costBasis, shares: 0)
+            },
+            updatedAt: nil,
+            isLoading: true
+        )
+    }
 }
 
 struct FundEstimateResponse: Decodable, Equatable, Sendable {
     let fundCode: String
+    let name: String?
+    let previousNAVString: String?
+    let estimatedNAVString: String?
     let estimatedChangePercent: String
     let estimateTime: String
 
     enum CodingKeys: String, CodingKey {
         case fundCode = "fundcode"
+        case name
+        case previousNAVString = "dwjz"
+        case estimatedNAVString = "gsz"
         case estimatedChangePercent = "gszzl"
         case estimateTime = "gztime"
     }
 
     var changePercent: Double? {
         guard let value = Double(estimatedChangePercent), value.isFinite else {
+            return nil
+        }
+        return value
+    }
+
+    var navValue: Double? {
+        guard let str = estimatedNAVString,
+              let value = Double(str), value.isFinite, value > 0 else {
+            return nil
+        }
+        return value
+    }
+
+    var prevNavValue: Double? {
+        guard let str = previousNAVString,
+              let value = Double(str), value.isFinite, value > 0 else {
             return nil
         }
         return value
