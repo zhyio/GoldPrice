@@ -18,6 +18,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private let marketService = MarketService()
     private let fundService = FundService()
     private let fundStorage = FundStorage.live()
+    private let supabaseSync = SupabaseSync()
     private var marketTimer: Timer?
     private var fundTimer: Timer?
     private var isRefreshingMarket = false
@@ -30,6 +31,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         setupWindow()
         setupStatusBar()
         startFetching()
+        syncFromCloud()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -60,6 +62,46 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func savePortfolio() throws {
         try fundStorage.save(funds.holdings)
+        syncToCloud()
+    }
+
+    // MARK: - Cloud Sync
+
+    private func syncFromCloud() {
+        Task {
+            guard let cloudHoldings = await supabaseSync.fetchHoldings() else { return }
+            guard !cloudHoldings.isEmpty else { return }
+
+            // Merge: cloud data replaces local cost/shares for known funds
+            var merged = funds
+            merged.holdings = cloudHoldings.map { cloud in
+                var h = FundHolding(
+                    code: cloud.code,
+                    name: cloud.name,
+                    costBasis: cloud.costBasis,
+                    shares: cloud.shares
+                )
+                // Preserve any live NAV data we already fetched
+                if let local = funds.holdings.first(where: { $0.code == cloud.code }) {
+                    h.estimatedNAV = local.estimatedNAV
+                    h.previousNAV = local.previousNAV
+                    h.todayChangePercent = local.todayChangePercent
+                    h.estimateTime = local.estimateTime
+                }
+                return h
+            }
+
+            funds = merged
+            try? fundStorage.save(funds.holdings)
+            render()
+        }
+    }
+
+    private func syncToCloud() {
+        let holdings = funds.holdings
+        Task.detached {
+            await self.supabaseSync.uploadHoldings(holdings)
+        }
     }
 
     // MARK: - Fund Management

@@ -33,7 +33,7 @@ struct MarketView: View {
                 fundTable
             }
         }
-        .frame(width: areFundsExpanded ? 530 : 320)
+        .frame(width: areFundsExpanded ? 485 : 320)
         .frame(maxHeight: .infinity, alignment: .top)
         .background(glassBackground)
     }
